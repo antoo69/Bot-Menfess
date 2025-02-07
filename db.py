@@ -17,7 +17,6 @@ class DB:
             create table if not exists user_db
             (
                 user_id integer,
-                user_db,
                 is_banned boolean,
                 ban_duration integer,
                 ban_reason text
