@@ -11,14 +11,12 @@ from pyrogram.types import (
 )
 from config import config
 from db import db
-from fsubs_handler import handle_fsub
 from functions import b64_to_string, string_to_b64
 
 
 class Client(BotClient):
     def __init__(self, session_name, api_id, api_hash, bot_token):
         super().__init__(session_name, api_id, api_hash, bot_token=bot_token)
-        self.fsub_ch_link = None
         self.db_channel = None
         self.bot_username = None
 
@@ -34,15 +32,6 @@ class Client(BotClient):
 
     async def start(self):
         await super().start()
-        try:
-            invite_link = await self.export_chat_invite_link(config.fsub_chid)
-            self.fsub_ch_link = invite_link
-        except ChatAdminRequired:
-            await self.send_message(
-                config.log_channel,
-                "**Bot harus menjadi admin di channel force subs!**\n**Sistem dimatikan**"
-            )
-            return sys.exit()
         try:
             self.db_channel = (await self.get_chat(config.db_chid)).invite_link
         except ChatAdminRequired:
@@ -128,9 +117,8 @@ async def start_hndlr(c: Client, m: Message):
 )
 async def send_media_(c: Client, m: Message):
     chat_type = m.chat.type
-    if chat_type == "private" and config.fsub_chid:
+    if chat_type == "private":
         await c.add_user_(m)
-        await handle_fsub(c, m)
         return await m.reply(
             f"**Mau kirim {'media' if not m.text else 'pesan'} kemana?**",
             reply_markup=InlineKeyboardMarkup([
