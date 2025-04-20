@@ -1,5 +1,6 @@
 import asyncio
 import sys
+from datetime import datetime
 from typing import Union
 
 from pyrogram import Client as BotClient, filters, raw, idle
@@ -7,8 +8,10 @@ from pyrogram.errors import ChatAdminRequired
 from pyrogram.types import (
     Message,
     InlineKeyboardMarkup,
-    InlineKeyboardButton, CallbackQuery
+    InlineKeyboardButton,
+    CallbackQuery
 )
+
 from config import config
 from db import db
 from functions import b64_to_string, string_to_b64
@@ -45,11 +48,7 @@ class Client(BotClient):
     async def stop(self, *args, **kwargs):
         return await super().stop()
 
-    async def leave_chat(
-        self,
-        chat_id: Union[int, str],
-        delete: bool = False
-    ):
+    async def leave_chat(self, chat_id: Union[int, str], delete: bool = False):
         await self.send_message(
             chat_id,
             "**Maaf, chat ini ada pada list banned dan tidak bisa diakses!**",
@@ -110,10 +109,7 @@ async def start_hndlr(c: Client, m: Message):
 
 
 @bot.on_message(
-    filters.text
-    | filters.media
-    & ~filters.sticker
-    & ~filters.edited
+    (filters.text | filters.media) & ~filters.sticker
 )
 async def send_media_(c: Client, m: Message):
     chat_type = m.chat.type
@@ -121,13 +117,11 @@ async def send_media_(c: Client, m: Message):
         await c.add_user_(m)
         return await m.reply(
             f"**Mau kirim {'media' if not m.text else 'pesan'} kemana?**",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("Channel 1", "channel1"),
-                    InlineKeyboardButton("Channel 2", "channel2"),
-                    InlineKeyboardButton("Channel 3", "channel3"),
-                ]
-            ]),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("Channel 1", "channel1"),
+                InlineKeyboardButton("Channel 2", "channel2"),
+                InlineKeyboardButton("Channel 3", "channel3"),
+            ]]),
             quote=True
         )
 
@@ -137,38 +131,42 @@ async def get_mode(c: Client, cb: CallbackQuery):
     m = cb.message
     match = int(cb.matches[0].group(1))
     message_id = m.reply_to_message.message_id
+
     if match == 1:
         channel_tujuan = config.channel1
     elif match == 2:
         channel_tujuan = config.channel2
     else:
         channel_tujuan = config.channel3
+
     x = await c.copy_message(
         channel_tujuan,
         m.chat.id,
         message_id,
         caption=m.caption or None
     )
+
     if isinstance(x, Message):
         message_id = x.message_id
         chat_id = x.chat.id
     else:
         message_id = None
         chat_id = None
+
     await m.delete()
     await m.reply(
         "**Pesan berhasil terkirim, silakan lihat dengan klik tombol dibawah ini!**",
-        reply_markup=InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("Klik disini", url=f"https://t.me/c/{str(chat_id)[4:]}/{message_id}")
-            ]
-        ])
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("Klik disini", url=f"https://t.me/c/{str(chat_id)[4:]}/{message_id}")
+        ]])
     )
+
     fwd = await c.forward_messages(
         config.log_channel,
         m.chat.id,
         message_id
     )
+
     m = m.reply_to_message
     await fwd.reply(
         (
@@ -184,7 +182,8 @@ async def main():
     try:
         await db.connect()
         await db.init()
-        print("Berjalan")
+        print(f"[{datetime.now()}] Berjalan")
+        await asyncio.sleep(1)  # Delay agar waktu sinkron
         await bot.start()
         await idle()
         await bot.stop()
