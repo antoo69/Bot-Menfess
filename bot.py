@@ -14,7 +14,6 @@ from pyrogram.types import (
 
 from config import config
 from db import db
-from functions import b64_to_string, string_to_b64
 
 
 class Client(BotClient):
@@ -68,7 +67,6 @@ class Client(BotClient):
                     user_id=raw.types.InputUserSelf()
                 )
             )
-
             if delete:
                 await self.send(
                     raw.functions.messages.DeleteHistory(
@@ -76,7 +74,6 @@ class Client(BotClient):
                         max_id=0
                     )
                 )
-
             return r
 
 
@@ -86,46 +83,77 @@ bot = Client(
     config.api_hash,
     bot_token=config.bot_token
 )
-media_list = {}
 
 
+# Fungsi force subscribe
+async def check_fsub(client: Client, user_id: int) -> Union[bool, InlineKeyboardMarkup]:
+    try:
+        member = await client.get_chat_member(config.fsub_channel, user_id)
+        if member.status in ("member", "administrator", "creator"):
+            return True
+    except Exception:
+        pass
+    btn = InlineKeyboardMarkup([[
+        InlineKeyboardButton("Gabung Channel", url=f"https://t.me/{config.fsub_channel.strip('@')}")
+    ]])
+    return btn
+
+
+# Handler Start
 @bot.on_message(filters.command("start") & filters.private)
 async def start_hndlr(c: Client, m: Message):
     if m.from_user.id in await db.get_all_banned_user():
         return await m.reply("Maaf, anda terban oleh owner kami.")
-    if len(m.command) == 1:
-        await c.add_user_(m)
+
+    await c.add_user_(m)
+    check = await check_fsub(c, m.from_user.id)
+    if check is not True:
         return await m.reply(
-            "Hi",
-            reply_markup=InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton("About Bot", "aboutbot"),
-                        InlineKeyboardButton("About Dev", "aboutdev")
-                    ]
-                ]
-            )
+            "**Silakan gabung ke channel kami dulu sebelum lanjut.**",
+            reply_markup=check
         )
 
+    return await m.reply(
+        "Hi, silakan kirim pesan atau gambar yang ingin kamu kirim secara anonim.",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("About Bot", "aboutbot"),
+                    InlineKeyboardButton("About Dev", "aboutdev")
+                ]
+            ]
+        )
+    )
 
-@bot.on_message(
-    (filters.text | filters.media) & ~filters.sticker
-)
+
+# Handler pesan teks/media
+@bot.on_message((filters.text | filters.media) & ~filters.sticker)
 async def send_media_(c: Client, m: Message):
-    chat_type = m.chat.type
-    if chat_type == "private":
-        await c.add_user_(m)
+    if m.chat.type != "private":
+        return
+
+    await c.add_user_(m)
+    check = await check_fsub(c, m.from_user.id)
+    if check is not True:
         return await m.reply(
-            f"**Mau kirim {'media' if not m.text else 'pesan'} kemana?**",
-            reply_markup=InlineKeyboardMarkup([[
+            "**Silakan gabung ke channel kami dulu sebelum lanjut.**",
+            reply_markup=check
+        )
+
+    return await m.reply(
+        f"**Mau kirim {'media' if not m.text else 'pesan'} kemana?**",
+        reply_markup=InlineKeyboardMarkup([
+            [
                 InlineKeyboardButton("Channel 1", "channel1"),
                 InlineKeyboardButton("Channel 2", "channel2"),
                 InlineKeyboardButton("Channel 3", "channel3"),
-            ]]),
-            quote=True
-        )
+            ]
+        ]),
+        quote=True
+    )
 
 
+# Callback handler kirim ke channel
 @bot.on_callback_query(filters.regex(r"channel(\d+)"))
 async def get_mode(c: Client, cb: CallbackQuery):
     m = cb.message
@@ -146,18 +174,11 @@ async def get_mode(c: Client, cb: CallbackQuery):
         caption=m.caption or None
     )
 
-    if isinstance(x, Message):
-        message_id = x.message_id
-        chat_id = x.chat.id
-    else:
-        message_id = None
-        chat_id = None
-
     await m.delete()
     await m.reply(
         "**Pesan berhasil terkirim, silakan lihat dengan klik tombol dibawah ini!**",
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("Klik disini", url=f"https://t.me/c/{str(chat_id)[4:]}/{message_id}")
+            InlineKeyboardButton("Klik disini", url=f"https://t.me/c/{str(x.chat.id)[4:]}/{x.message_id}")
         ]])
     )
 
@@ -178,12 +199,13 @@ async def get_mode(c: Client, cb: CallbackQuery):
     )
 
 
+# Main loop
 async def main():
     try:
         await db.connect()
         await db.init()
         print(f"[{datetime.now()}] Berjalan")
-        await asyncio.sleep(1)  # Delay agar waktu sinkron
+        await asyncio.sleep(1)
         await bot.start()
         await idle()
         await bot.stop()
