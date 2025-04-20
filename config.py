@@ -8,7 +8,7 @@ class Config:
     api_id = int(getenv("API_ID", "23345148"))
     api_hash = getenv("API_HASH", "fe37a47fef4345512ed47c17d3306f0b")
     bot_token = getenv("BOT_TOKEN", "8161422676:AAGnGOJ8nn-_HftdLZJ6gWqmY2xbfnJ43Bw")
-    fsub_channel = getenv("FSUB_CHANNEL", "BestieVirtual")
+    fsub_channel1 = getenv("FSUB_CHANNEL1", "BestieVirtual")
     fsub_channel2 = getenv("FSUB_CHANNEL2", "BestieVirtualPap")  # Channel kedua
     fsub_channel3 = getenv("FSUB_CHANNEL3")
     log_channel = int(getenv("LOG_CHANNEL", "-1002351111178"))
