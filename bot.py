@@ -85,16 +85,20 @@ bot = Client(
 )
 
 
-# Fungsi force subscribe
+# Fungsi untuk memeriksa apakah user sudah bergabung ke salah satu fsub channel
 async def check_fsub(client: Client, user_id: int) -> Union[bool, InlineKeyboardMarkup]:
-    try:
-        member = await client.get_chat_member(config.fsub_channel, user_id)
-        if member.status in ("member", "administrator", "creator"):
-            return True
-    except Exception:
-        pass
-    btn = InlineKeyboardMarkup([[
-        InlineKeyboardButton("Gabung Channel", url=f"https://t.me/{config.fsub_channel.strip('@')}")
+    # Cek setiap channel fsub
+    for fsub_channel in [config.fsub_channel1, config.fsub_channel2, config.fsub_channel3]:
+        try:
+            member = await client.get_chat_member(fsub_channel, user_id)
+            if member.status in ("member", "administrator", "creator"):
+                return True
+        except Exception:
+            continue
+    
+    # Jika user belum bergabung dengan salah satu channel, tampilkan tombol untuk gabung
+    btn = InlineKeyboardMarkup([[ 
+        InlineKeyboardButton("Gabung Channel", url=f"https://t.me/{config.fsub_channel1.strip('@')}")
     ]])
     return btn
 
