@@ -23,6 +23,14 @@ class DB:
             )
             """
         )
+        await self.db.execute(
+            """
+            create table if not exists fsub_channel
+            (
+                channel text primary key
+            )
+            """
+        )
         return
 
     async def add_user(self, user_id: int):
@@ -47,6 +55,30 @@ class DB:
     async def get_all_users(self):
         all_user = await self.db.fetch_all("select user_id from user_db")
         return all_user
+
+    async def add_fsub_channel(self, channel: str):
+        if not await self.is_fsub_channel(channel):
+            return await self.db.execute(
+                "insert into fsub_channel values (:channel)",
+                {"channel": channel}
+            )
+
+    async def is_fsub_channel(self, channel: str):
+        data = await self.db.fetch_one(
+            "select channel from fsub_channel where channel = :channel",
+            {"channel": channel}
+        )
+        return bool(data)
+
+    async def get_fsub_channels(self):
+        rows = await self.db.fetch_all("select channel from fsub_channel")
+        return [row[0] for row in rows]
+
+    async def del_fsub_channel(self, channel: str):
+        return await self.db.execute(
+            "delete from fsub_channel where channel = :channel",
+            {"channel": channel}
+        )
 
     async def del_user(self, user_id: int):
         return await self.db.execute("delete from user_db where user_id = :user_id", {"user_id": user_id})
