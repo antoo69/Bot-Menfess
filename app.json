@@ -1,6 +1,6 @@
 {
-    "name": "Telegram Files Store Bot",
-    "description": "A Telegram Files Store Bot in Pyrogram by @AbirHasan2005",
+    "name": "Telegram Menfess Bot",
+    "description": "Bot menfess anonim berbasis Pyrogram dengan dukungan backup SQLite.",
     "keywords": [
         "telegram",
         "files",
@@ -23,34 +23,30 @@
             "description": "Get this from @BotFather XD",
             "value": "18263nnnnnnnIjl973lwcfifiLYOKwqc-HK7Lk"
         },
-        "LOG_CHANNEL": {
-            "description": "Your Bot Username which you sent to @BotFather (Without [@])",
-            "value": "-10nnnnn99"
-        },
-        "FORCESUB_CHANNEL": {
-            "description": "The Channel ID which will be used as Database. Example: -100123456789",
-            "value": "-100nnnnnnnnn1083"
-        },
         "DB_CHANNEL": {
-            "description": "Bot Owner UserID",
+            "description": "Channel/grup database yang harus bisa diakses bot. Contoh: -1001234567890",
             "value": "-1001nnnnnmmm087"
         },
-        "BLACKLISTED_CHANNEL": {
-            "description": "MongoDB Database URI for Saving UserID for Broadcast.",
-            "value": "-10nnnnnmm301073"
+        "LOG_CHANNEL": {
+            "description": "Channel log untuk notifikasi dan forward pesan. Contoh: -1001234567890",
+            "value": "-10nnnnn99"
         },
-        "CHANNEL_1": {
-            "description": "ID of a Channel which you want to do Force Sub to use the bot. Example: -100123456789",
-            "value": "-100nnnnnmm1083"
+        "OWNER_ID": {
+            "description": "User ID owner bot. Bisa lebih dari satu, pisahkan dengan koma.",
+            "value": "123456789"
         },
-        "CHANNEL_2": {
-            "description": "Logs Channel ID for some Tracking XD. Example: -100123456789",
-            "value": "-10011nnnnmm83",
+        "DEV_ID": {
+            "description": "User ID developer yang berhak aktivasi, atur expired, dan limit bot.",
+            "value": "123456789"
+        },
+        "BACKUP_DIR": {
+            "description": "Folder penyimpanan backup lokal.",
+            "value": "backups",
             "required": false
         },
-        "CHANNEL_3": {
-            "description": "Banned unwanted members",
-            "value": "-1001nnnnmmm083",
+        "BLACKLISTED_CHANNEL": {
+            "description": "Daftar channel/grup terlarang, pisahkan dengan koma bila lebih dari satu.",
+            "value": "",
             "required": false
         }
     },

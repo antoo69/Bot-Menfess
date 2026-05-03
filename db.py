@@ -1,4 +1,5 @@
 from databases import Database
+from datetime import datetime
 
 
 class DB:
@@ -31,7 +32,34 @@ class DB:
             )
             """
         )
+        await self.db.execute(
+            """
+            create table if not exists bot_settings
+            (
+                key text primary key,
+                value text
+            )
+            """
+        )
+        await self.ensure_default_settings()
         return
+
+    async def ensure_default_settings(self):
+        defaults = {
+            "is_active": "0",
+            "expires_at": "",
+            "fsub_limit": "0",
+            "group_limit": "0",
+            "content_limit": "0",
+        }
+        for key, value in defaults.items():
+            await self.db.execute(
+                """
+                insert or ignore into bot_settings(key, value)
+                values (:key, :value)
+                """,
+                {"key": key, "value": value}
+            )
 
     async def add_user(self, user_id: int):
         is_exists = await self.is_exist(user_id)
@@ -73,6 +101,10 @@ class DB:
     async def get_fsub_channels(self):
         rows = await self.db.fetch_all("select channel from fsub_channel")
         return [row[0] for row in rows]
+
+    async def get_fsub_channel_count(self):
+        row = await self.db.fetch_one("select count(*) from fsub_channel")
+        return int(row[0]) if row else 0
 
     async def del_fsub_channel(self, channel: str):
         return await self.db.execute(
@@ -144,12 +176,50 @@ class DB:
 
     async def get_ban_status(self, user_id: int):
         user = await self.db.fetch_one("select * from user_db where user_id = :user_id", {"user_id": user_id})
+        if not user:
+            return False
         _, is_banned, _, _ = user
         return bool(is_banned)
 
     async def get_all_banned_user(self):
         users = await self.db.fetch_all("select user_id from user_db where is_banned = :is_banned", {"is_banned": True})
         return [user[0] for user in users]
+
+    async def set_setting(self, key: str, value: str):
+        await self.db.execute(
+            """
+            insert into bot_settings(key, value)
+            values (:key, :value)
+            on conflict(key) do update set value = excluded.value
+            """,
+            {"key": key, "value": value}
+        )
+
+    async def get_setting(self, key: str, default: str = ""):
+        row = await self.db.fetch_one(
+            "select value from bot_settings where key = :key",
+            {"key": key}
+        )
+        return row[0] if row else default
+
+    async def get_bot_settings(self):
+        rows = await self.db.fetch_all("select key, value from bot_settings")
+        data = {row[0]: row[1] for row in rows}
+        expires_at_raw = data.get("expires_at", "")
+        expires_at = None
+        if expires_at_raw:
+            try:
+                expires_at = datetime.fromisoformat(expires_at_raw)
+            except ValueError:
+                expires_at = None
+
+        return {
+            "is_active": data.get("is_active", "0") == "1",
+            "expires_at": expires_at,
+            "fsub_limit": int(data.get("fsub_limit", "0") or 0),
+            "group_limit": int(data.get("group_limit", "0") or 0),
+            "content_limit": int(data.get("content_limit", "0") or 0),
+        }
 
 
 db = DB()

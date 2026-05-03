@@ -1,4 +1,5 @@
 import asyncio
+import math
 import os
 import shutil
 import sys
@@ -31,7 +32,7 @@ class Client(BotClient):
         if not await db.is_exist(user_id):
             await db.add_user(user_id)
             if config.log_channel:
-                await self.send_message(
+                await safe_send_message(
                     config.log_channel,
                     f"#NEW_USER\n\nNama: {m.from_user.first_name}\nId: {m.from_user.id}\nLink: {m.from_user.mention}"
                 )
@@ -41,7 +42,7 @@ class Client(BotClient):
         try:
             self.db_channel = (await self.get_chat(config.db_chid)).invite_link
         except ChatAdminRequired:
-            await self.send_message(
+            await safe_send_message(
                 config.log_channel,
                 "**Bot harus menjadi admin di channel database!**\n**Sistem dimatikan**"
             )
@@ -130,7 +131,7 @@ async def send_backup_to_log(backup_path: Path) -> None:
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             zipf.write(backup_path, arcname=backup_path.name)
         
-        await bot.send_document(
+        await safe_send_document(
             config.log_channel,
             document=str(zip_path),
             caption=f"Backup database dibuat pada {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -187,6 +188,113 @@ def build_channel_buttons(channels: list[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
+def build_message_link(chat, message_id: int) -> str | None:
+    if getattr(chat, "username", None):
+        return f"https://t.me/{chat.username}/{message_id}"
+
+    chat_id = str(chat.id)
+    if chat_id.startswith("-100"):
+        return f"https://t.me/c/{chat_id[4:]}/{message_id}"
+
+    return None
+
+
+async def safe_send_message(chat_id: int | None, text: str) -> None:
+    if not chat_id:
+        return
+    try:
+        await bot.send_message(chat_id, text)
+    except Exception as exc:
+        print(f"Gagal kirim log message: {exc}")
+
+
+async def safe_send_document(chat_id: int | None, document: str, caption: str) -> None:
+    if not chat_id:
+        return
+    try:
+        await bot.send_document(chat_id, document=document, caption=caption)
+    except Exception as exc:
+        print(f"Gagal kirim log document: {exc}")
+
+
+def format_expiry(expires_at: datetime | None) -> str:
+    if not expires_at:
+        return "Belum diatur"
+    return expires_at.strftime("%Y-%m-%d %H:%M:%S")
+
+
+async def get_license_state() -> dict:
+    settings = await db.get_bot_settings()
+    expires_at = settings["expires_at"]
+    expired = bool(expires_at and datetime.now() > expires_at)
+    effective_channel_limit = 0
+    limits = [
+        limit for limit in (
+            settings["content_limit"],
+            settings["fsub_limit"],
+            settings["group_limit"]
+        ) if limit > 0
+    ]
+    if limits:
+        effective_channel_limit = min(limits)
+
+    settings["expired"] = expired
+    settings["effective_channel_limit"] = effective_channel_limit
+    return settings
+
+
+def is_dev(user_id: int) -> bool:
+    return user_id in config.dev_id
+
+
+def build_license_text(state: dict) -> str:
+    status = "Aktif" if state["is_active"] and not state["expired"] else "Nonaktif"
+    remaining_text = "0 hari"
+    if state["is_active"] and not state["expired"] and state["expires_at"]:
+        remaining_delta = state["expires_at"] - datetime.now()
+        remaining_days = max(0, math.ceil(remaining_delta.total_seconds() / 86400))
+        remaining_text = f"{remaining_days} hari"
+    return (
+        f"Status bot: {status}\n"
+        f"Expired: {format_expiry(state['expires_at'])}\n"
+        f"Sisa hari: {remaining_text}\n"
+        f"Limit konten: {state['content_limit'] or 'Unlimited'}\n"
+        f"Limit fsub: {state['fsub_limit'] or 'Unlimited'}\n"
+        f"Limit group: {state['group_limit'] or 'Unlimited'}\n"
+        f"Limit efektif daftar channel: {state['effective_channel_limit'] or 'Unlimited'}"
+    )
+
+
+async def ensure_bot_available(m: Message) -> bool:
+    if is_dev(m.from_user.id):
+        return True
+
+    state = await get_license_state()
+    if state["is_active"] and not state["expired"]:
+        return True
+
+    reason = "Bot belum diaktifkan oleh developer." if not state["is_active"] else (
+        f"Masa aktif bot sudah habis pada {format_expiry(state['expires_at'])}."
+    )
+    await m.reply(f"{reason}\nHubungi developer untuk aktivasi.")
+    return False
+
+
+async def ensure_bot_available_callback(cb: CallbackQuery) -> bool:
+    if is_dev(cb.from_user.id):
+        return True
+
+    state = await get_license_state()
+    if state["is_active"] and not state["expired"]:
+        return True
+
+    reason = "Bot belum diaktifkan oleh developer." if not state["is_active"] else (
+        f"Masa aktif bot sudah habis pada {format_expiry(state['expires_at'])}."
+    )
+    await cb.answer(reason, show_alert=True)
+    return False
+
+
 # Fungsi untuk memeriksa apakah user sudah bergabung ke salah satu fsub channel
 async def check_fsub(client: Client, user_id: int) -> Union[bool, InlineKeyboardMarkup]:
     fsub_channels = await db.get_fsub_channels()
@@ -205,9 +313,97 @@ async def check_fsub(client: Client, user_id: int) -> Union[bool, InlineKeyboard
     return build_channel_buttons(fsub_channels)
 
 
+@bot.on_message(filters.command("license") & filters.private)
+async def license_handler(c: Client, m: Message):
+    if not is_dev(m.from_user.id) and m.from_user.id not in config.owner_id:
+        return await m.reply("Hanya developer atau owner yang bisa melihat status lisensi bot.")
+
+    state = await get_license_state()
+    return await m.reply(build_license_text(state))
+
+
+@bot.on_message(filters.command("cek") & filters.private)
+async def cek_handler(c: Client, m: Message):
+    if not is_dev(m.from_user.id) and m.from_user.id not in config.owner_id:
+        return await m.reply("Hanya developer atau owner yang bisa mengecek status bot.")
+
+    args = m.text.split(maxsplit=1)
+    me = await c.get_me()
+    if len(args) > 1:
+        target = args[1].strip().lstrip("@")
+        valid_targets = {str(me.id)}
+        if me.username:
+            valid_targets.add(me.username.lower())
+        if target.lower() not in valid_targets:
+            return await m.reply("Bot ID atau username tidak cocok dengan bot ini.")
+
+    state = await get_license_state()
+    return await m.reply(
+        f"Bot ID: {me.id}\nUsername: @{me.username or '-'}\n{build_license_text(state)}"
+    )
+
+
+@bot.on_message(filters.command("sewa") & filters.private)
+async def sewa_handler(c: Client, m: Message):
+    if not is_dev(m.from_user.id):
+        return await m.reply("Hanya developer yang bisa mengaktifkan bot.")
+
+    args = m.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        return await m.reply("Gunakan: /sewa <jumlah_hari>\nContoh: /sewa 30")
+
+    total_days = int(args[1])
+    if total_days <= 0:
+        return await m.reply("Jumlah hari harus lebih dari 0.")
+
+    state = await get_license_state()
+    base_time = datetime.now()
+    if state["is_active"] and not state["expired"] and state["expires_at"]:
+        base_time = state["expires_at"]
+
+    expires_at = base_time + timedelta(days=total_days)
+    await db.set_setting("is_active", "1")
+    await db.set_setting("expires_at", expires_at.isoformat())
+    state = await get_license_state()
+    return await m.reply(
+        f"Masa aktif bot berhasil ditambah {total_days} hari.\n{build_license_text(state)}"
+    )
+
+
+@bot.on_message(filters.command("deactivate") & filters.private)
+async def deactivate_handler(c: Client, m: Message):
+    if not is_dev(m.from_user.id):
+        return await m.reply("Hanya developer yang bisa menonaktifkan bot.")
+
+    await db.set_setting("is_active", "0")
+    state = await get_license_state()
+    return await m.reply(f"Bot berhasil dinonaktifkan.\n{build_license_text(state)}")
+
+
+@bot.on_message(filters.command("limitkonten") & filters.private)
+async def limitkonten_handler(c: Client, m: Message):
+    if not is_dev(m.from_user.id):
+        return await m.reply("Hanya developer yang bisa mengatur limit bot.")
+
+    args = m.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        return await m.reply(
+            "Gunakan: /limitkonten <jumlah>\n"
+            "Isi 0 jika ingin unlimited. Contoh: /limitkonten 5"
+        )
+
+    content_limit = int(args[1])
+    await db.set_setting("content_limit", str(content_limit))
+    state = await get_license_state()
+    return await m.reply(f"Limit konten bot diperbarui.\n{build_license_text(state)}")
+
+
 # Bot management command untuk menambahkan fsub channel secara dinamis
 @bot.on_message(filters.command("addgc") & filters.private)
 async def addgc_handler(c: Client, m: Message):
+    if not await ensure_bot_available(m):
+        return
+
     if not config.owner_id:
         return await m.reply(
             "OWNER_ID belum dikonfigurasi. Tambahkan OWNER_ID di local.env atau environment variable."
@@ -229,12 +425,23 @@ async def addgc_handler(c: Client, m: Message):
     if await db.is_fsub_channel(channel):
         return await m.reply(f"Channel {channel} sudah terdaftar sebagai fsub.")
 
+    state = await get_license_state()
+    effective_limit = state["effective_channel_limit"]
+    current_total = await db.get_fsub_channel_count()
+    if effective_limit and current_total >= effective_limit:
+        return await m.reply(
+            f"Limit channel bot sudah penuh ({effective_limit}). Hubungi developer untuk menaikkan limit."
+        )
+
     await db.add_fsub_channel(channel)
     return await m.reply(f"Berhasil menambahkan channel fsub: {channel}")
 
 
 @bot.on_message(filters.command("listgc") & filters.private)
 async def listgc_handler(c: Client, m: Message):
+    if not await ensure_bot_available(m):
+        return
+
     if not config.owner_id:
         return await m.reply(
             "OWNER_ID belum dikonfigurasi. Tambahkan OWNER_ID di local.env atau environment variable."
@@ -253,6 +460,9 @@ async def listgc_handler(c: Client, m: Message):
 
 @bot.on_message(filters.command("backup") & filters.private)
 async def backup_handler(c: Client, m: Message):
+    if not await ensure_bot_available(m):
+        return
+
     if not config.owner_id:
         return await m.reply(
             "OWNER_ID belum dikonfigurasi. Tambahkan OWNER_ID di local.env atau environment variable."
@@ -272,7 +482,7 @@ async def backup_handler(c: Client, m: Message):
         )
         
         if config.log_channel:
-            await bot.send_document(
+            await safe_send_document(
                 config.log_channel,
                 document=str(backup_path),
                 caption=f"Backup dibuat oleh owner pada {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -283,6 +493,9 @@ async def backup_handler(c: Client, m: Message):
 
 @bot.on_message(filters.command("listbackup") & filters.private)
 async def listbackup_handler(c: Client, m: Message):
+    if not await ensure_bot_available(m):
+        return
+
     if not config.owner_id:
         return await m.reply(
             "OWNER_ID belum dikonfigurasi. Tambahkan OWNER_ID di local.env atau environment variable."
@@ -301,6 +514,9 @@ async def listbackup_handler(c: Client, m: Message):
 
 @bot.on_message(filters.command("restore") & filters.private)
 async def restore_handler(c: Client, m: Message):
+    if not await ensure_bot_available(m):
+        return
+
     if not config.owner_id:
         return await m.reply(
             "OWNER_ID belum dikonfigurasi. Tambahkan OWNER_ID di local.env atau environment variable."
@@ -309,7 +525,6 @@ async def restore_handler(c: Client, m: Message):
     if m.from_user.id not in config.owner_id:
         return await m.reply("Hanya owner bot yang dapat menggunakan perintah ini.")
 
-    backup_to_restore = None
     backup_file_path = None
 
     if m.reply_to_message and m.reply_to_message.document:
@@ -355,7 +570,7 @@ async def restore_handler(c: Client, m: Message):
         await m.reply("✅ Restore berhasil! Bot perlu di-restart untuk hasil optimal.")
         
         if config.log_channel:
-            await bot.send_message(
+            await safe_send_message(
                 config.log_channel,
                 f"🔄 Restore database dilakukan oleh owner\nWaktu: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
@@ -371,6 +586,9 @@ async def restore_handler(c: Client, m: Message):
 # Handler Start
 @bot.on_message(filters.command("start") & filters.private)
 async def start_hndlr(c: Client, m: Message):
+    if not await ensure_bot_available(m):
+        return
+
     if m.from_user.id in await db.get_all_banned_user():
         return await m.reply("Maaf, anda terban oleh owner kami.")
 
@@ -395,10 +613,30 @@ async def start_hndlr(c: Client, m: Message):
     )
 
 
+@bot.on_callback_query(filters.regex("^aboutbot$"))
+async def aboutbot_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    await cb.message.reply(
+        "Bot ini dipakai untuk mengirim pesan atau media secara anonim ke channel yang sudah didaftarkan owner."
+    )
+
+
+@bot.on_callback_query(filters.regex("^aboutdev$"))
+async def aboutdev_handler(c: Client, cb: CallbackQuery):
+    await cb.answer()
+    await cb.message.reply(
+        "Info developer belum diatur di project ini. Kamu bisa ganti teks ini sesuai identitas admin bot."
+    )
+
+
 # Handler pesan teks/media
 @bot.on_message((filters.text | filters.media) & ~filters.sticker)
 async def send_media_(c: Client, m: Message):
     if m.chat.type != "private":
+        return
+    if m.text and m.text.startswith("/"):
+        return
+    if not await ensure_bot_available(m):
         return
 
     await c.add_user_(m)
@@ -429,6 +667,9 @@ async def send_media_(c: Client, m: Message):
 # Callback handler kirim ke channel
 @bot.on_callback_query(filters.regex(r"send_channel_(\d+)"))
 async def send_channel_handler(c: Client, cb: CallbackQuery):
+    if not await ensure_bot_available_callback(cb):
+        return
+
     m = cb.message
     if not m.reply_to_message:
         return await cb.answer("Pesan tidak ditemukan", show_alert=True)
@@ -448,33 +689,41 @@ async def send_channel_handler(c: Client, cb: CallbackQuery):
             channel_peer,
             m.chat.id,
             message_id,
-            caption=m.caption or None
+            caption=m.reply_to_message.caption or None
         )
         
         await m.delete()
+        sent_message_link = build_message_link(x.chat, x.message_id)
+        reply_markup = None
+        if sent_message_link:
+            reply_markup = InlineKeyboardMarkup([[
+                InlineKeyboardButton("Klik disini", url=sent_message_link)
+            ]])
         await m.reply(
             "**Pesan berhasil terkirim, silakan lihat dengan klik tombol dibawah ini!**",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("Klik disini", url=f"https://t.me/c/{str(x.chat.id)[4:]}/{x.message_id}")
-            ]])
+            reply_markup=reply_markup
         )
-        
-        fwd = await c.forward_messages(
-            config.log_channel,
-            m.chat.id,
-            message_id
-        )
-        
-        reply_msg = m.reply_to_message
-        await fwd.reply(
-            (
-                "**User mengirim pesan**\n"
-                f"Nama: {reply_msg.from_user.first_name}\n"
-                f"Id: {reply_msg.from_user.id}\n"
-                f"Username: {reply_msg.from_user.mention}\n"
-                f"Channel tujuan: {channels[channel_idx]}"
-            )
-        )
+
+        if config.log_channel:
+            try:
+                fwd = await c.forward_messages(
+                    config.log_channel,
+                    m.chat.id,
+                    message_id
+                )
+
+                reply_msg = m.reply_to_message
+                await fwd.reply(
+                    (
+                        "**User mengirim pesan**\n"
+                        f"Nama: {reply_msg.from_user.first_name}\n"
+                        f"Id: {reply_msg.from_user.id}\n"
+                        f"Username: {reply_msg.from_user.mention}\n"
+                        f"Channel tujuan: {channels[channel_idx]}"
+                    )
+                )
+            except Exception as log_exc:
+                print(f"Gagal kirim log pesan: {log_exc}")
     except Exception as e:
         await cb.answer(f"Error: {e}", show_alert=True)
 
@@ -482,6 +731,10 @@ async def send_channel_handler(c: Client, cb: CallbackQuery):
 # Main loop
 async def main():
     try:
+        missing_config = config.missing_required()
+        if missing_config:
+            print(f"Config wajib belum diisi: {', '.join(missing_config)}")
+            return
         await db.connect()
         await db.init()
         print(f"[{datetime.now()}] Berjalan")

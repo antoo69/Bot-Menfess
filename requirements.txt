@@ -1,5 +1,4 @@
 pyrogram
-TgCrypto
 databases[aiosqlite]
-aiosqlite[user_db]
+aiosqlite
 python-dotenv
